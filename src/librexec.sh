@@ -96,14 +96,14 @@ function rexec() {
         path="$(echo "$path" | sed -r "s/^[^:]+:(.+)$/\1/")"
         # TODO: Handle tildes here
         cmd="$(echo "$cmd" | sed "s^::path::^$path^g" | sed "s^::host::^$host^g")"
-        if ! ssh "$host" "$cmd"; then
-            if [ "$?" == 255 ]; then
+        if ssh "$host" "$cmd"; then
+            return
+        else
+            RET="$?"
+            if [ "$RET" == 255 ]; then
                 exit_error_ssh "$host"
             else
-                >&2 echo
-                >&2 echo "E: Couldn't execute command '$cmd' on host '$host'"
-                >&2 echo
-                exit 30
+                return "$RET"
             fi
         fi
     else
