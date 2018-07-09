@@ -67,6 +67,20 @@ function path_exists() {
 # Command delegater
 
 function rexec() {
+    # Get options first (accepts several passthrough options for SSH)
+    OPTIND=0
+    SSHOPTS=()
+    local opt=
+    while getopts "t" opt; do
+        SSHOPTS+=("-$opt")
+        if [ "$OPTARG" ]; then
+            SSHOPTS+=("$OPTARG")
+        fi
+    done
+    shift $((OPTIND-1))
+    OPTIND=1
+
+    # Now assign and validate parameters
     local path="$1"
     local cmd="$2"
     if [ -z "$path" ]; then
@@ -96,7 +110,7 @@ function rexec() {
         path="$(echo "$path" | sed -r "s/^[^:]+:(.+)$/\1/")"
         # TODO: Handle tildes here
         cmd="$(echo "$cmd" | sed "s^::path::^$path^g" | sed "s^::host::^$host^g")"
-        if ssh "$host" "$cmd"; then
+        if ssh ${SSHOPTS[@]} "$host" "$cmd"; then
             return
         else
             RET="$?"

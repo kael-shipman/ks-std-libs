@@ -1,0 +1,10 @@
+Package: ks-std-libs
+Version: ::VERSION::
+Section: free
+Priority: optional
+Architecture: all
+Depends: openssh-client
+Installed-Size: 0
+Maintainer: Kael Shipman <kael.shipman@gmail.com>
+Description: A collection of libraries that are small and useful
+ See https://github.com/kael-shipman/ks-std-libs for more details
