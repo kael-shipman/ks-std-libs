@@ -69,7 +69,7 @@ function path_exists() {
 function rexec() {
     # Get options first (accepts several passthrough options for SSH)
     OPTIND=0
-    SSHOPTS=()
+    local SSHOPTS=()
     local opt=
     while getopts "t" opt; do
         SSHOPTS+=("-$opt")
@@ -78,7 +78,7 @@ function rexec() {
         fi
     done
     shift $((OPTIND-1))
-    OPTIND=1
+    OPTIND=0
 
     # Now assign and validate parameters
     local path="$1"
