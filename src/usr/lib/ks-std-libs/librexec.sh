@@ -71,7 +71,7 @@ function rexec() {
     OPTIND=0
     local SSHOPTS=()
     local opt=
-    while getopts "t" opt; do
+    while getopts "tni:o:" opt; do
         SSHOPTS+=("-$opt")
         if [ "$OPTARG" ]; then
             SSHOPTS+=("$OPTARG")

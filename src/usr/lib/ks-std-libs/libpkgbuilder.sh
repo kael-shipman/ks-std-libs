@@ -2,9 +2,9 @@
 
 # This library is intended to be included in a package builder environment that defines the following functions:
 #
-# * setup_env -- Should set global buildir, pkgsrcdir, and pkgtype variables and do sanity checks
-# * place_files $pkgname $targdir -- Should handle building files for $pkgname from source and placing them in hierarchy at $targdir
-# * build_package $targdir $builddir -- Should build a finished binary package given the prepared hierarchy at $targdir and place it in $builddir
+# * setup_env -- Should set global buildir and pkgsrcdir variables and do sanity checks
+# * place_files $pkgname $targdir $pkgtype -- Should handle building files for $pkgname from source and placing them in hierarchy at $targdir ($pkgtype is provided in case special files are required for certain package types)
+# * build_package $pkgtype $targdir $builddir -- Should build a finished binary package of type $pkgtype given the prepared hierarchy at $targdir and place it in $builddir
 #
 
 function build() {
@@ -34,14 +34,6 @@ function build() {
         exit 5
     fi
 
-    if [ -z "$pkgtype" ]; then
-        >&2 echo
-        >&2 echo "E: Your setup_env function must set the global pkgtype variable to a value that corresponds with"
-        >&2 echo "   the names of subdirectories of $pkgsrcdir"
-        >&2 echo
-        exit 6
-    fi
-
     if [ ! -d "$pkgsrcdir" ]; then
         >&2 echo
         >&2 echo "E: \$pkgsrcdir ($pkgsrcdir) doesn't appear to exist. Are you sure you're running this from your repo root?"
@@ -50,35 +42,46 @@ function build() {
     fi
 
     local pkgcount=0
-    for pkgdir in "$pkgsrcdir/$pkgtype"/*; do
-        if [ ! -e "$pkgdir" ]; then
+    for pkgtype in "$pkgsrcdir"/*; do
+        if [ ! -e "$pkgtype" ]; then
             continue;
         fi
+        pkgtype="$(basename "$pkgtype")"
 
-        !((pkgcount++))
-
-        local pkgname="$(basename "$pkgdir")"
-        local targdir="$builddir/$pkgname"
-
-        rm -Rf "$targdir" 2>/dev/null
-        cp -R --preserve=mode "$pkgdir" "$targdir"
-
-        # Place generic files
-        if [ -e "$pkgsrcdir/generic/$pkgname" ]; then
-            cp -R "$pkgsrcdir/generic/$pkgname"/* "$targdir/"
+        # Skip special "generic" folder
+        if [ "$pkgtype" == "generic" ]; then
+            continue
         fi
 
-        # Call project-specific place_files function
-        place_files "$pkgname" "$targdir" "$pkgsrcdir"
+        for pkgdir in "$pkgsrcdir/$pkgtype"/*; do
+            if [ ! -e "$pkgdir" ]; then
+                continue;
+            fi
 
-        # Replace version with current version (Making sure to escape the special VERSION selector so it doesn't get subbed out itself)
-        sed -i "s/::""VERSION""::/$(cat VERSION)/g" $(grep -Frl "::""VERSION""::" "$targdir" | sed '/\.sw[op]$/d')
+            !((pkgcount++))
 
+            local pkgname="$(basename "$pkgdir")"
+            local targdir="$builddir/$pkgname"
 
-        # Build deb package
-        build_package "$targdir" "$builddir"
+            rm -Rf "$targdir" 2>/dev/null
+            cp -R --preserve=mode "$pkgdir" "$targdir"
 
-        rm -Rf "$targdir"
+            # Place generic files
+            if [ -e "$pkgsrcdir/generic/$pkgname" ]; then
+                cp -R "$pkgsrcdir/generic/$pkgname"/* "$targdir/"
+            fi
+
+            # Call project-specific place_files function
+            place_files "$pkgname" "$targdir" "$pkgtype"
+
+            # Replace version with current version (Making sure to escape the special VERSION selector so it doesn't get subbed out itself)
+            sed -i "s/::""VERSION""::/$(cat VERSION)/g" $(grep -Frl "::""VERSION""::" "$targdir" | sed '/\.sw[op]$/d')
+
+            # Build deb package
+            build_package "$pkgtype" "$targdir" "$builddir"
+
+            rm -Rf "$targdir"
+        done
     done
 
     if [ "$pkgcount" -eq 0 ]; then

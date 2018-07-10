@@ -9,11 +9,22 @@ function setup_env() {
 function place_files() {
     local pkgname="$1"
     local targdir="$2"
+    local pkgtype="$3"
     cp -R src/* "$targdir/"
 }
 
 function build_package() {
-    build_deb_package "$@"
+    local pkgtype="$1"
+    shift
+
+    if [ "$pkgtype" == "deb" ]; then
+        build_deb_package "$@"
+    else
+        >&2 echo
+        >&2 echo "E: Don't know how to build packages of type '$pkgtype'"
+        >&2 echo
+        exit 11
+    fi
 }
 
 # Include the library and go
