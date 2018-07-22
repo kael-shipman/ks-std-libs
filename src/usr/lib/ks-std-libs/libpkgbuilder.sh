@@ -1,12 +1,47 @@
 #!/bin/bash
 
-# This library is intended to be included in a package builder environment that defines the following functions:
+# This library implements the "predefined algorithm" pattern by using a series of functions intended to be
+# environment-defined  to perform the work of building specific types of packages. It's primary "export" is
+# the `build` function, which expects the environment to define a `setup_env` function to set up the build
+# environment, a `place_files` function to place files from the source into the $target (provided as an
+# argument), and a `build_package` function to build a package of the type passed as the first argument.
 #
-# * setup_env -- Should set global buildir and pkgsrcdir variables and do sanity checks
-# * place_files $pkgname $targdir $pkgtype -- Should handle building files for $pkgname from source and placing them in hierarchy at $targdir ($pkgtype is provided in case special files are required for certain package types)
-# * build_package $pkgtype $targdir $builddir -- Should build a finished binary package of type $pkgtype given the prepared hierarchy at $targdir and place it in $builddir
+# These are the full interfaces expected of those functions:
 #
+# * setup_env -- Sets optional global $builddir and $pkgsrcdir variables and does sanity checks, like
+#   making sure certain libraries are loaded, if necessary. ($builddir defaults to 'build' and $pkgsrcdir
+#   defaults to 'pkg-src'.)
+# * place_files $pkgname $targdir $pkgtype -- Handles building files for $pkgname package from source and
+#   placing them in the hierarchy at $targdir ($pkgtype is provided in case special files are required for
+#   certain package types, e.g., deb vs rpm vs pacman)
+# * build_package $pkgtype $targdir $builddir -- Builds a finished binary package of type $pkgtype given the
+#   prepared package source at $targdir and places it in $builddir
+##
 
+
+##
+# This is a framework function that depends on the following setup:
+#
+# * ./VERSION - a file containing the version of the current package.
+# * ./$pkgsrcdir/[pkg-type]/[pkg-meta-files] - The per-package meta-files for each package type. For example,
+#   this might include ./$pkgsrcdir/deb/DEBIAN/{config,control,postinst,postrm,templates}.
+# * ./$pkgsrcdir/generic - (OPTIONAL) Directory containing files (like systemd files or cron files) that should be
+#   applied to all packages.
+#
+# It iterates through all non-generic subdirectories of $pkgsrcdir (for example, `deb`, `rpm`, `pacman`), then
+# iterates through each package directory within those (for example, `deb/mypkg1`, `deb/mypkg2`), then does the
+# following for each package:
+#
+# 1. Cleans $builddir of previous attempts to build the package
+# 2. Copies $pkgsrcdir/$pkgtype/$pkgname to $builddir/$pkgname.$pkgtype
+# 3. Copies files from $pkgsrcdir/generic/$pkgname/ into $builddir/$pkgname.$pkgtype/
+# 4. Calls `place_files "$pkgname" "$targdir" "$pkgtype"`
+# 5. Replaces the string '::VERSION::' in any of the files in $builddir/$pkgname.$pkgtype/ with the version from ./VERSION
+# 6. Calls `build_package "$pkgtype" "$targdir" "$builddir"`
+# 7. Cleans up (`rm -Rf "$builddir/$pkgname.$pkgtype"`)
+#
+# When this is finished, a final binary package file of each type should exist for each package defined.
+##
 function build() {
     if [ ! -e "./VERSION" ]; then
         >&2 echo
@@ -19,19 +54,20 @@ function build() {
     setup_env
 
     if [ -z "$builddir" ]; then
-        >&2 echo
-        >&2 echo "E: Your setup_env function must set the global builddir variable to your build directory."
-        >&2 echo
-        exit 4
+        builddir="build"
     fi
     mkdir -p "$builddir"
 
     if [ -z "$pkgsrcdir" ]; then
-        >&2 echo
-        >&2 echo "E: Your setup_env function must set the global pkgsrcdir variable to the directory containing your"
-        >&2 echo "   package sources"
-        >&2 echo
-        exit 5
+        if [ -d "pkg-src" ]; then
+            pkgsrcdir="pkg-src"
+        else
+            >&2 echo
+            >&2 echo "E: Your setup_env function must set the global \$pkgsrcdir variable to the directory containing your"
+            >&2 echo "   package sources (or you must use the default, 'pkg-src', as your \$pkgsrcdir)"
+            >&2 echo
+            exit 5
+        fi
     fi
 
     if [ ! -d "$pkgsrcdir" ]; then
@@ -61,7 +97,7 @@ function build() {
             !((pkgcount++))
 
             local pkgname="$(basename "$pkgdir")"
-            local targdir="$builddir/$pkgname"
+            local targdir="$builddir/$pkgname.$pkgtype"
 
             rm -Rf "$targdir" 2>/dev/null
             cp -R --preserve=mode "$pkgdir" "$targdir"
@@ -98,6 +134,11 @@ function build() {
 
 # Debian specific
 
+##
+# Convenience function that does deb-specific dependency checks
+#
+# This is usually called from the global "setup_env" when $pkgtype == "deb"
+##
 function setup_deb_env() {
     if ! command -v dpkg &>/dev/null; then
         >&2 echo
@@ -106,16 +147,13 @@ function setup_deb_env() {
         >&2 echo
         exit 3
     fi
-
-    if [ -z "$builddir" ]; then
-        builddir="build"
-    fi
-    if [ -z "$pkgsrcdir" ]; then
-        pkgsrcdir="pkg-src"
-    fi
-    pkgtype=deb
 }
 
+##
+# Convenience function that builds dep packages according to standard algorithm
+#
+# This is usually called from the global "build_package" when $pkgtype == "deb"
+##
 function build_deb_package() {
     local targdir="$1"
     local builddir="$2"
@@ -128,6 +166,13 @@ function build_deb_package() {
     ksdpkg_change_ownership "$targdir"
 }
 
+##
+# Argument-checking function
+#
+# @param string $pkgdir The root of the deb package being built
+# @return 0|1
+# @stdout $pkgdir
+##
 function ksdpkg_require_pkg_dir() {
     if [ ! -d "$1" ]; then
         >&2 echo "E: First argument should be the root directory of the package you're"
@@ -137,6 +182,14 @@ function ksdpkg_require_pkg_dir() {
     echo "$1"
 }
 
+##
+# Temporarily clears extra files like .swp files, setting the $ksdpkg_extrafiles environment
+# variable to be used later to restore them.
+#
+# @param string $pkgdir The root of the deb package being built
+# @return 0|1
+# @stdout void
+##
 function ksdpkg_clear_extra_files() {
     local PKGDIR=
     if ! PKGDIR="$(ksdpkg_require_pkg_dir "$1")"; then
@@ -145,6 +198,7 @@ function ksdpkg_clear_extra_files() {
 
     shift
 
+    unset ksdpkg_extrafiles
     declare -ag ksdpkg_extrafiles
     ksdpkg_filestore=/tmp/ks-extra-filestore
 
@@ -162,6 +216,13 @@ function ksdpkg_clear_extra_files() {
     done
 }
 
+##
+# Restores files previously cleared by ksdpkg_clear_extra_files
+#
+# @param string $pkgdir The root of the deb package being built
+# @return 0|1
+# @stdout void
+##
 function ksdpkg_restore_extra_files() {
     local PKGDIR=
     if ! PKGDIR="$(ksdpkg_require_pkg_dir "$1")"; then
@@ -177,6 +238,16 @@ function ksdpkg_restore_extra_files() {
     rm -Rf "$ksdpkg_filestore"
 }
 
+##
+# Updates the version of the package to that given as the second argument
+#
+# @deprecated -- Use ::VERSION:: variable substitution now
+#
+# @param string $pkgdir The root of the deb package being built
+# @param string $version The new version of the package
+# @return 0|1
+# @stdout void
+##
 function ksdpkg_update_pkg_version() {
     local PKGDIR=
     if ! PKGDIR="$(ksdpkg_require_pkg_dir "$1")"; then
@@ -192,6 +263,14 @@ function ksdpkg_update_pkg_version() {
     sed -i "s/^Version:.*$/Version: $2/" "$PKGDIR/DEBIAN/control"
 }
 
+##
+# Combs through all directories under $pkgsrc, excluding "DEBIAN", and calculates the total
+# size of the installed package.
+#
+# @param string $pkgdir The root of the deb package being built
+# @return 0|1
+# @stdout void
+##
 function ksdpkg_update_pkg_size() {
     local PKGDIR=
     if ! PKGDIR="$(ksdpkg_require_pkg_dir "$1")"; then
@@ -211,6 +290,14 @@ function ksdpkg_update_pkg_size() {
     fi
 }
 
+##
+# Combs through all directories under $pkgsrc, excluding "DEBIAN", and calculates the md5 sum
+# of every file found, outputting to $pkgsrc/DEBIAN/md5sums.
+#
+# @param string $pkgdir The root of the deb package being built
+# @return 0|1
+# @stdout void
+##
 function ksdpkg_update_md5s() {
     local PKGDIR=
     if ! PKGDIR="$(ksdpkg_require_pkg_dir "$1")"; then
@@ -223,10 +310,20 @@ function ksdpkg_update_md5s() {
         local repl=$(echo "$PKGDIR/" | sed 's/\//\\\//g') # escape slashes in pathnam
         sed -i "s/$repl//g" "$PKGDIR/DEBIAN/md5sums" # make files in md5sums relative to package root
     else
-        echo > "$PKGDIR/DEBIAN/md5sums"
+        echo -n > "$PKGDIR/DEBIAN/md5sums"
     fi
 }
 
+##
+# Combs through all directories under $pkgsrc, excluding "DEBIAN", and, if second argument is "root", for any
+# file owned by the current active user, changes ownership to root. If second argument is blank (or otherwise
+# not "root"), it changes ownership back to the current active user.
+#
+# @param string $pkgdir The root of the deb package being built
+# @param string "root"|null If changing to root, then "root"; otherwise, null
+# @return 0|1
+# @stdout void
+##
 function ksdpkg_change_ownership() {
     local PKGDIR=
     if ! PKGDIR="$(ksdpkg_require_pkg_dir "$1")"; then
