@@ -10,7 +10,7 @@ function place_files() {
     local pkgname="$1"
     local targdir="$2"
     local pkgtype="$3"
-    cp -R src/* "$targdir/"
+    cp -a src/* "$targdir/"
 }
 
 function build_package() {
