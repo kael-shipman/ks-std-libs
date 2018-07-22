@@ -1,0 +1,50 @@
+#!/bin/bash
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    >&2 echo "E: This script MUST BE SOURCED to function correctly. Intended usage is like so:"
+    >&2 echo
+    >&2 echo "   /usr/bin/my-script.sh:"
+    >&2 echo
+    >&2 echo "   #!/bin/bash"
+    >&2 echo "   . require my-module my/relative/search/path my/backup/search/path /usr/lib/my-module"
+    >&2 echo
+    exit 1
+fi
+
+varname=
+while getopts 'v:' arg; do
+    case "$arg" in
+        v) varname="$OPTARG" ;;
+    esac
+done
+shift "$(($OPTIND-1))"
+OPTIND=1
+
+lib="$1"
+shift
+
+libloaded="false"
+checkeddirs=
+for requiredir in "$@"; do
+    checkeddirs="$rquiredir"$'\x1e'
+    if [ -e "$requiredir/$lib" ]; then
+        . "$requiredir/$lib"
+        libloaded="true"
+        if [ -n "$varname" ]; then
+            declare -g $varname="$requiredir"
+        fi
+        break
+    fi
+done
+
+if [ "$libloaded" == "false" ]; then
+    if ! . "$lib" &>/dev/null; then
+        >&2 echo "E: Couldn't load $lib. Check at the following locations:"
+        >&2 echo
+        while IFS= read -r -d $'\x1e' d; do >&2 echo "    $d"; done
+        >&2 echo
+        >&2 echo "and on path."
+        exit 180
+    fi
+fi
+
